@@ -65,19 +65,19 @@ class MySubscriber : public rclcpp::Node {
 
    private:
     void topic_callback(const sensor_msgs::msg::LaserScan& msg) {
-        float max = 0;
-        for(size_t i = 0; i < msg.ranges.size(); i++) {
-            if(msg.ranges[i] > max && msg.ranges[i] < msg.range_max ) {
-                max = msg.ranges[i];
+        float min = msg.ranges[0];
+        for(size_t i = 1; i < msg.ranges.size(); i++) {
+            if(msg.ranges[i] < min && msg.ranges[i] > msg.range_min ) {
+                min = msg.ranges[i];
                 data.angle = std::abs(msg.angle_min + msg.angle_increment*i*2);
             }
         }
-        if(max > 5.0f) {
+        if(min < 3.0f) {
             Pa_StartStream(stream);
         } else {
             Pa_StopStream(stream);
         }
-        std::cout << max << " : " << data.angle << std::endl;
+        std::cout << min << " : " << data.angle << std::endl;
     }
 
     static int patestCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo *timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
