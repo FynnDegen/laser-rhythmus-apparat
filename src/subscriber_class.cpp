@@ -21,12 +21,12 @@
 #endif
 
 #define TABLE_SIZE   (200)
-typedef struct
-{
+typedef struct {
     float sine[TABLE_SIZE];
     int left_phase;
     int right_phase;
     char message[20];
+    float angle;
 }
 paTestData;
 
@@ -39,19 +39,17 @@ class MySubscriber : public rclcpp::Node {
     PaStream *stream;
     PaError err;
     paTestData data;
-    int i;
 
    public:
     MySubscriber() : Node("subscriber") {
         auto default_qos = rclcpp::QoS(rclcpp::SystemDefaultsQoS());
         subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>("scan", default_qos, std::bind(&MySubscriber::topic_callback, this, _1));
 
-        for( i=0; i<TABLE_SIZE; i++ ) {
+        for(int i = 0; i<TABLE_SIZE; i++ ) {
             data.sine[i] = (float) sin( ((double)i/(double)TABLE_SIZE) * M_PI * 2. );
         }
         data.left_phase = data.right_phase = 0;
 
-        std::cout << "Start" << std::endl;
         PaError err = Pa_Initialize();
         checkErr(err);
 
@@ -66,11 +64,12 @@ class MySubscriber : public rclcpp::Node {
     }
 
    private:
-    void topic_callback(const sensor_msgs::msg::LaserScan& msg) const {
+    void topic_callback(const sensor_msgs::msg::LaserScan& msg) {
         float max = 0;
         for(size_t i = 0; i < msg.ranges.size(); i++) {
             if(msg.ranges[i] > max && msg.ranges[i] < msg.range_max ) {
                 max = msg.ranges[i];
+                data.angle = std::abs(msg.angle_min + msg.angle_increment*i*2);
             }
         }
         if(max > 5.0f) {
@@ -78,24 +77,22 @@ class MySubscriber : public rclcpp::Node {
         } else {
             Pa_StopStream(stream);
         }
-        std::cout << max << std::endl;
+        std::cout << max << " : " << data.angle << std::endl;
     }
 
-    static int patestCallback( const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo *timeInfo, PaStreamCallbackFlags statusFlags, void *userData ) {
+    static int patestCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo *timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
         paTestData *data = (paTestData*)userData;
         float *out = (float*)outputBuffer;
-        unsigned long i;
-
         (void) timeInfo; /* Prevent unused variable warnings. */
         (void) statusFlags;
         (void) inputBuffer;
 
-        for( i=0; i<framesPerBuffer; i++ ) {
+        for(unsigned long i = 0; i < framesPerBuffer; i++ ) {
             *out++ = data->sine[data->left_phase];  /* left */
             *out++ = data->sine[data->right_phase];  /* right */
-            data->left_phase += 1;
+            data->left_phase += data->angle;
             if( data->left_phase >= TABLE_SIZE ) data->left_phase -= TABLE_SIZE;
-            data->right_phase += 3; /* higher pitch so we can distinguish left and right. */
+            data->right_phase += data->angle;
             if( data->right_phase >= TABLE_SIZE ) data->right_phase -= TABLE_SIZE;
         }
 
@@ -108,11 +105,11 @@ class MySubscriber : public rclcpp::Node {
     }
 
     static void checkErr(PaError err) {
-    if(err != paNoError) {
-        std::cout << "PortAudio error: " << Pa_GetErrorText(err) << std::endl;
-        exit(EXIT_FAILURE);
+        if(err != paNoError) {
+            std::cout << "PortAudio error: " << Pa_GetErrorText(err) << std::endl;
+            exit(EXIT_FAILURE);
+        }
     }
-}
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
