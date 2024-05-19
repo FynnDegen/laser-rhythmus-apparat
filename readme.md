@@ -4,6 +4,12 @@
 
 - Linux Ubuntu
 
+## Installation
+
+```
+sudo apt-get install curl cmake clang pulseaudio libasound-dev libjack-dev
+```
+
 ## Starten
 
 - Konsole starten
