@@ -2,8 +2,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <iostream>
-#include <string>
-#include <regex>
+#include <string.h>
 #include <stdio.h>
 #include <math.h>
 
@@ -32,6 +31,20 @@ static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long
     return paContinue;
 }
 
+static int paCallbackLaser2(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
+    float *out = (float*)outputBuffer;
+    SineWaveData *data = (SineWaveData*)userData;
+    
+    for (unsigned long i = 0; i < framesPerBuffer; i++) {
+        *out++ = (float)(data->amplitude * sin(data->phase));
+        data->phase += (2.0 * M_PI * data->frequency) / SAMPLE_RATE;
+        if (data->phase >= 2.0 * M_PI) {
+            data->phase -= 2.0 * M_PI;
+        }
+    }
+    return paContinue;
+}
+
 int main() {
     // serial port
     int serial_port = open("/dev/ttyACM0", O_RDONLY);
@@ -45,13 +58,26 @@ int main() {
     data.phase = 0.0;
     data.phaseIncrement = (2.0 * M_PI * data.frequency) / SAMPLE_RATE;
 
+    PaStream *streamLaser2;
+    SineWaveData dataLaser2;
+    dataLaser2.frequency = 440.0;
+    dataLaser2.amplitude = 0.5;
+    dataLaser2.phase = 0.0;
+    dataLaser2.phaseIncrement = (2.0 * M_PI * dataLaser2.frequency) / SAMPLE_RATE;
+
     err = Pa_Initialize();
     if (err != paNoError) goto error;
 
     err = Pa_OpenDefaultStream(&stream, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data);
     if (err != paNoError) goto error;
 
+    err = Pa_OpenDefaultStream(&streamLaser2, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &dataLaser2);
+    if (err != paNoError) goto error;
+
     err = Pa_StartStream(stream);
+    if (err != paNoError) goto error;
+
+    err = Pa_StartStream(streamLaser2);
     if (err != paNoError) goto error;
 
     if (serial_port < 0) {
@@ -108,17 +134,28 @@ int main() {
             break;
         }
 
-        // std::string pattern(":1:[1-9][0-9]*:2:[1-9][0-9]*");
-        // std::regex rx(pattern); 
-        // std::string measurement = atoi(read_buf);
-        int measurement = atoi(read_buf);
-        if(measurement <= 880 && measurement >= 220) {
-            data.frequency = measurement;
-        } else if((measurement > 880 || measurement < 220) && measurement != 0) {
-            data.frequency = 0;
+        std::string measurement = read_buf;
+        int laser1index = measurement.find(":1:");
+        int laser2index = measurement.find(":2:");
+        if(laser1index != -1 && laser2index != -1) {
+            int laser1 = std::stoi(measurement.substr(laser1index + 3, laser2index - laser1index - 3));
+            int laser2 = std::stoi(measurement.substr(laser2index + 3));
+
+            std::cout << laser1 << " " << laser2 << std::endl;
+
+            if(laser1 <= 880 && laser1 >= 220) {
+                data.frequency = laser1;
+            } else if((laser1 > 880 || laser1 < 220) && laser1 != 0) {
+                data.frequency = 0;
+            }
+
+            if(laser2 <= 880 && laser2 >= 220) {
+                dataLaser2.frequency = laser2;
+            } else if((laser2 > 880 || laser2 < 220) && laser2 != 0) {
+                dataLaser2.frequency = 0;
+            }
         }
 
-        std::cout << measurement << std::endl;
         memset(&read_buf, '\0', sizeof(read_buf));
     }
 
