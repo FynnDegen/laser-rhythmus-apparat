@@ -9,6 +9,7 @@
 #include <portaudio.h>
 
 #define SAMPLE_RATE 44100
+#define NUM_LASER 2
 
 typedef struct {
     double frequency;
@@ -31,18 +32,42 @@ static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long
     return paContinue;
 }
 
-static int paCallbackLaser2(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
-    float *out = (float*)outputBuffer;
-    SineWaveData *data = (SineWaveData*)userData;
-    
-    for (unsigned long i = 0; i < framesPerBuffer; i++) {
-        *out++ = (float)(data->amplitude * sin(data->phase));
-        data->phase += (2.0 * M_PI * data->frequency) / SAMPLE_RATE;
-        if (data->phase >= 2.0 * M_PI) {
-            data->phase -= 2.0 * M_PI;
+void checkErr(PaError err) {
+    Pa_Terminate();
+    fprintf(stderr, "An error occurred while using the PortAudio stream\n");
+    fprintf(stderr, "Error number: %d\n", err);
+    fprintf(stderr, "Error message: %s\n", Pa_GetErrorText(err));
+}
+
+void initalizeSineWaveData(SineWaveData data[]) {
+    for(int i = 0; i < NUM_LASER; i++) {
+        data[i].frequency = 440.0;
+        data[i].amplitude = 0.5;
+        data[i].phase = 0.0;
+        data[i].phaseIncrement = (2.0 * M_PI * data[i].frequency) / SAMPLE_RATE;
+    }
+}
+
+void openAndStartAllStreams(PaStream *stream[], SineWaveData data[]) {
+    for(int i = 0; i < NUM_LASER; i++) {
+        if( PaError err = Pa_OpenDefaultStream(&stream[i], 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data[i]) != paNoError) {
+            checkErr(err);
+        }
+        if(PaError err = Pa_StartStream(stream[i]) != paNoError) {
+            checkErr(err);
         }
     }
-    return paContinue;
+}
+
+void stopAndCloseAllStreams(PaStream *stream[]) {
+    for(int i = 0; i < NUM_LASER; i++) {
+        if(PaError err = Pa_StopStream(stream[i]) != paNoError) {
+            checkErr(err);
+        }
+        if(PaError err = Pa_CloseStream(stream[i]) != paNoError) {
+            checkErr(err);
+        }
+    }
 }
 
 int main() {
@@ -50,39 +75,25 @@ int main() {
     int serial_port = open("/dev/ttyACM0", O_RDONLY);
 
     //PortAudio
-    PaStream *stream;
-    PaError err;
-    SineWaveData data;
-    data.frequency = 440.0;
-    data.amplitude = 0.5;
-    data.phase = 0.0;
-    data.phaseIncrement = (2.0 * M_PI * data.frequency) / SAMPLE_RATE;
+    PaStream *stream[NUM_LASER];
+    SineWaveData data[NUM_LASER];
 
-    PaStream *streamLaser2;
-    SineWaveData dataLaser2;
-    dataLaser2.frequency = 440.0;
-    dataLaser2.amplitude = 0.5;
-    dataLaser2.phase = 0.0;
-    dataLaser2.phaseIncrement = (2.0 * M_PI * dataLaser2.frequency) / SAMPLE_RATE;
+    // int (*callbacks[2])(const void*, void*, unsigned long, const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void*);
 
-    err = Pa_Initialize();
-    if (err != paNoError) goto error;
+    // callbacks[0] = paCallback0;
+    // callbacks[1] = paCallback1;
 
-    err = Pa_OpenDefaultStream(&stream, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data);
-    if (err != paNoError) goto error;
+    initalizeSineWaveData(data);
 
-    err = Pa_OpenDefaultStream(&streamLaser2, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &dataLaser2);
-    if (err != paNoError) goto error;
+    if(PaError err = Pa_Initialize() != paNoError) {
+        checkErr(err);
+    }
 
-    err = Pa_StartStream(stream);
-    if (err != paNoError) goto error;
+    openAndStartAllStreams(stream, data);   
 
-    err = Pa_StartStream(streamLaser2);
-    if (err != paNoError) goto error;
-
-    if (serial_port < 0) {
+    if(serial_port < 0) {
         std::cerr << "Error opening serial port\n";
-        return 1;
+        return -1;
     }
 
     // Configure serial port
@@ -116,7 +127,7 @@ int main() {
     cfsetispeed(&tty, B9600);
     cfsetospeed(&tty, B9600);
 
-    if (tcsetattr(serial_port, TCSANOW, &tty) != 0) {
+    if(tcsetattr(serial_port, TCSANOW, &tty) != 0) {
         std::cerr << "Error setting termios attributes\n";
         close(serial_port);
         return 1;
@@ -126,33 +137,25 @@ int main() {
     char read_buf[256];
     memset(&read_buf, '\0', sizeof(read_buf));
 
-    while (true) {
+    while(true) {
         int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
 
-        if (num_bytes < 0) {
+        if(num_bytes < 0) {
             std::cerr << "Error reading from serial port\n";
             break;
         }
 
         std::string measurement = read_buf;
-        int laser1index = measurement.find(":1:");
-        int laser2index = measurement.find(":2:");
-        if(laser1index != -1 && laser2index != -1) {
-            int laser1 = std::stoi(measurement.substr(laser1index + 3, laser2index - laser1index - 3));
-            int laser2 = std::stoi(measurement.substr(laser2index + 3));
+        if(measurement.find(":") != std::string::npos) {
+            int laserIndex = measurement.at(1) - '0';
+            int laser = std::stoi(measurement.substr(3));
 
-            std::cout << laser1 << " " << laser2 << std::endl;
+            std::cout << laserIndex << " " << laser << std::endl;
 
-            if(laser1 <= 880 && laser1 >= 220) {
-                data.frequency = laser1;
-            } else if((laser1 > 880 || laser1 < 220) && laser1 != 0) {
-                data.frequency = 0;
-            }
-
-            if(laser2 <= 880 && laser2 >= 220) {
-                dataLaser2.frequency = laser2;
-            } else if((laser2 > 880 || laser2 < 220) && laser2 != 0) {
-                dataLaser2.frequency = 0;
+            if(laser <= 720 && laser >= 60) {
+                data[laserIndex].frequency = laser + 160;
+            } else if((laser > 720 || laser < 60) && laser != 0) {
+                data[laserIndex].frequency = 0;
             }
         }
 
@@ -161,19 +164,7 @@ int main() {
 
     close(serial_port);
 
-    err = Pa_StopStream(stream);
-    if (err != paNoError) goto error;
-
-    err = Pa_CloseStream(stream);
-    if (err != paNoError) goto error;
+    stopAndCloseAllStreams(stream);
 
     Pa_Terminate();
-    return 0;
-
-error:
-    Pa_Terminate();
-    fprintf(stderr, "An error occurred while using the PortAudio stream\n");
-    fprintf(stderr, "Error number: %d\n", err);
-    fprintf(stderr, "Error message: %s\n", Pa_GetErrorText(err));
-    return 1;
 }

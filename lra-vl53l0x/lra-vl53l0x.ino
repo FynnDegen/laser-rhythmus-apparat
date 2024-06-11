@@ -61,8 +61,14 @@ void read_dual_sensors() {
   lox1.rangingTest(&measure1, false); // pass in 'true' to get debug data printout!
   lox2.rangingTest(&measure2, false); // pass in 'true' to get debug data printout!
   
-  if(measure1.RangeStatus != 4 && measure2.RangeStatus != 4) {     // if not out of
-    String str = ":1:" + String(measure1.RangeMilliMeter) + ":2:" + String(measure2.RangeMilliMeter);
+  if(measure1.RangeStatus != 4) {
+    String str = ":0:" + String(measure1.RangeMilliMeter);
+    Serial.print(str);
+    Serial.println();
+  }
+
+  if(measure2.RangeStatus != 4) {
+    String str = ":1:" + String(measure2.RangeMilliMeter);
     Serial.print(str);
     Serial.println();
   }
