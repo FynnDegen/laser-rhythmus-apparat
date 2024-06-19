@@ -41,7 +41,7 @@ void checkErr(PaError err) {
 
 void initalizeSineWaveData(SineWaveData data[]) {
     for(int i = 0; i < NUM_LASER; i++) {
-        data[i].frequency = 440.0;
+        data[i].frequency = 0.0;
         data[i].amplitude = 0.5;
         data[i].phase = 0.0;
         data[i].phaseIncrement = (2.0 * M_PI * data[i].frequency) / SAMPLE_RATE;
