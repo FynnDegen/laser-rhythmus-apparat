@@ -17,3 +17,23 @@ https://www.amazon.de/Female-Female-Male-Female-Male-Male-Steckbr%C3%BCcken-Drah
 
 - 2x Steckbretter:
 https://www.amazon.de/VoltMate-Breadboard-Steckbrett-Kontakten-Kompatibel/dp/B0CX8MMN6T/ref=sr_1_19?__mk_de_DE=%C3%85M%C3%85%C5%BD%C3%95%C3%91&crid=2DG1O0GSYJMBC&dib=eyJ2IjoiMSJ9.isoB5-f5De9M0yk8l0f_ZqVxnxuJLnuHbEY37w30nFAzLCG1BWdmRTWUOCtWYLrVX6vD-GnijEXHgpSpfZp1AHaFIJ6JCzyp45WKnrGM2GAYzSpCblMe2oBLJfu9copTzN-wt-mOOb5NM10R8HBa5RVTCcadpzdtBhGT8MlUchusWxu4pR1A5mrO3FfFGSOObREQFpRHw02UBOIW1EmOoABw9hobIsTmVmhUqU4twpj9Tim8L1n0N6FoT-4eK84hBCN4QNXvkP5A-EA9iexjcMMwgGvdSm9DDb3Tl5GLjXY.dS3FpZTQO1DpBbMb3-qmpAPZMR60G3YBakS3LwTY8jY&dib_tag=se&keywords=steckbrett&qid=1714147855&s=industrial&sprefix=steckbrett%2Cindustrial%2C193&sr=1-19&th=1
+
+## Arduino
+
+Falls ein Fehler auf Linux ubuntu auftreten sollte:
+
+https://support.arduino.cc/hc/en-us/articles/9005041052444-Fix-udev-rules-on-Linux#renesas
+
+Wie angegeben die post_install.sh Datei von GitHub herunterladen und im Verzeichnis der Datei das Terminal öffnen.
+
+Dem .sh Skript Ausführungsrechte erteilen
+
+```
+chmod +x ./post_install.sh
+```
+
+Die Datei ausführen
+
+```
+sudo ./post_install.sh
+```
