@@ -8,8 +8,10 @@
 
 #include <portaudio.h>
 
+#define MODE true
+
 #define SAMPLE_RATE 44100
-#define NUM_LASER 2
+#define NUM_LASER 5
 
 typedef struct {
     double frequency;
@@ -70,7 +72,105 @@ void stopAndCloseAllStreams(PaStream *stream[]) {
     }
 }
 
-int main() {
+int defaultMode() {
+    // serial port
+    int serial_port = open("/dev/ttyACM0", O_RDONLY);
+
+    //PortAudio
+    PaStream *stream[NUM_LASER];
+    SineWaveData data[NUM_LASER];
+
+    const float notes[5] = {
+        987.767, 783.991, 659.255, 554.365, 440.0
+    };
+
+    initalizeSineWaveData(data);
+
+    if(PaError err = Pa_Initialize() != paNoError) {
+        checkErr(err);
+    }
+
+    openAndStartAllStreams(stream, data);   
+
+    if(serial_port < 0) {
+        std::cerr << "Error opening serial port\n";
+        return -1;
+    }
+
+    // Configure serial port
+    struct termios tty;
+    if(tcgetattr(serial_port, &tty) != 0) {
+        std::cerr << "Error getting termios attributes\n";
+        close(serial_port);
+        return 1;
+    }
+
+    tty.c_cflag &= ~PARENB; // No parity bit
+    tty.c_cflag &= ~CSTOPB; // One stop bit
+    tty.c_cflag &= ~CSIZE;  // Clear size bits
+    tty.c_cflag |= CS8;     // 8 data bits
+    tty.c_cflag &= ~CRTSCTS; // No flow control
+    tty.c_cflag |= CREAD | CLOCAL; // Turn on READ & ignore ctrl lines (CLOCAL = 1)
+
+    tty.c_lflag &= ~ICANON;
+    tty.c_lflag &= ~ECHO; // Disable echo
+    tty.c_lflag &= ~ECHOE; // Disable erasure
+    tty.c_lflag &= ~ECHONL; // Disable new-line echo
+    tty.c_lflag &= ~ISIG; // Disable interpretation of INTR, QUIT and SUSP
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Turn off s/w flow ctrl
+    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL); // Disable any special handling of received bytes
+    tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
+    tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
+
+    tty.c_cc[VTIME] = 1;    // Wait for up to 1s, returning as soon as any data is received
+    tty.c_cc[VMIN] = 0;
+
+    cfsetispeed(&tty, B9600);
+    cfsetospeed(&tty, B9600);
+
+    if(tcsetattr(serial_port, TCSANOW, &tty) != 0) {
+        std::cerr << "Error setting termios attributes\n";
+        close(serial_port);
+        return 1;
+    }
+
+    // Read and display data
+    char read_buf[256];
+    memset(&read_buf, '\0', sizeof(read_buf));
+
+    while(true) {
+        int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
+
+        if(num_bytes < 0) {
+            std::cerr << "Error reading from serial port\n";
+            break;
+        }
+
+        std::string measurement = read_buf;
+        if(measurement.find(":") != std::string::npos) {
+            int laserIndex = measurement.at(1) - '0';
+            int laser = std::stoi(measurement.substr(3));
+
+            std::cout << laserIndex << " " << laser << std::endl;
+
+            if(laser <= 720 && laser >= 60) {
+                data[laserIndex].frequency = notes[laserIndex];
+            } else if((laser > 720 || laser < 60) && laser != 0) {
+                data[laserIndex].frequency = 0;
+            }
+        }
+
+        memset(&read_buf, '\0', sizeof(read_buf));
+    }
+
+    close(serial_port);
+
+    stopAndCloseAllStreams(stream);
+
+    Pa_Terminate();
+}
+
+int experimentalMode() {
     // serial port
     int serial_port = open("/dev/ttyACM0", O_RDONLY);
 
@@ -167,4 +267,13 @@ int main() {
     stopAndCloseAllStreams(stream);
 
     Pa_Terminate();
+}
+
+
+int main() {
+    if(MODE) {
+        return defaultMode();
+    } else {
+        return experimentalMode();
+    }
 }

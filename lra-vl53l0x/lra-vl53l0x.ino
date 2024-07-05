@@ -65,6 +65,10 @@ void read_sensors() {
             String str = ":" + String(i) + ":" + String(measure[i].RangeMilliMeter);
             Serial.print(str);
             Serial.println();
+        } else {
+            String str = ":" + String(i) + ":1";
+            Serial.print(str);
+            Serial.println();
         }
     }
 }
