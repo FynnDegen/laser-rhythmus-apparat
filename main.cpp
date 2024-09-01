@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <signal.h>
 
 #include <portaudio.h>
 
@@ -13,12 +14,17 @@
 #define SAMPLE_RATE 44100
 #define NUM_LASER 5
 
-typedef struct {
+struct SineWaveData {
     double frequency;
     double amplitude;
     double phase;
     double phaseIncrement;
-} SineWaveData;
+};
+
+int serial_port;
+
+PaStream *stream[NUM_LASER];
+SineWaveData data[NUM_LASER];
 
 static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
     float *out = (float*)outputBuffer;
@@ -109,7 +115,6 @@ int openSerialPort(const char* port) {
     tty.c_cc[VMIN] = 0;
 
     cfsetispeed(&tty, B9600);
-    cfsetospeed(&tty, B9600);
 
     if(tcsetattr(serialPort, TCSANOW, &tty) != 0) {
         std::cerr << "Error setting termios attributes\n";
@@ -120,24 +125,11 @@ int openSerialPort(const char* port) {
     return serialPort;
 }
 
-int defaultMode() {
-    //PortAudio
-    PaStream *stream[NUM_LASER];
-    SineWaveData data[NUM_LASER];
-
-    int serial_port = openSerialPort("/dev/ttyACM0");
+void defaultMode() {
 
     const float notes[5] = {
         987.767, 783.991, 659.255, 554.365, 440.0
     }; // h2 g2 e2 cis2/des2 a1
-
-    initalizeSineWaveData(data);
-
-    if(PaError err = Pa_Initialize() != paNoError) {
-        checkErr(err);
-    }
-
-    openAndStartAllStreams(stream, data);   
 
     // Read and display data
     char read_buf[256];
@@ -167,39 +159,14 @@ int defaultMode() {
 
         memset(&read_buf, '\0', sizeof(read_buf));
     }
-
-    close(serial_port);
-
-    stopAndCloseAllStreams(stream);
-
-    Pa_Terminate();
 }
 
-int experimentalMode() {
-    //PortAudio
-    PaStream *stream[NUM_LASER];
-    SineWaveData data[NUM_LASER];
-
-    int serial_port = openSerialPort("/dev/ttyACM0");
-
-    // int (*callbacks[2])(const void*, void*, unsigned long, const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void*);
-
-    // callbacks[0] = paCallback0;
-    // callbacks[1] = paCallback1;
-
-    initalizeSineWaveData(data);
-
-    if(PaError err = Pa_Initialize() != paNoError) {
-        checkErr(err);
-    }
-
-    openAndStartAllStreams(stream, data);   
-
+void experimentalMode() {
     // Read and display data
     char read_buf[256];
-    memset(&read_buf, '\0', sizeof(read_buf));
 
     while(true) {
+        memset(&read_buf, '\0', sizeof(read_buf));
         int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
@@ -220,22 +187,36 @@ int experimentalMode() {
                 data[laserIndex].frequency = 0;
             }
         }
-
-        memset(&read_buf, '\0', sizeof(read_buf));
     }
-
-    close(serial_port);
-
-    stopAndCloseAllStreams(stream);
-
-    Pa_Terminate();
 }
 
+void signalHandler(int signum) {
+    close(serial_port);
+    stopAndCloseAllStreams(stream);
+    Pa_Terminate();
+    std::cout << "\nLRA beendet" << std::endl;
+    exit(0);
+}
 
 int main() {
+    // Signal handler
+    signal(SIGINT, signalHandler);
+
+    // Serial port
+    serial_port = openSerialPort("/dev/ttyACM0");
+
+    //PortAudio
+    initalizeSineWaveData(data);
+
+    if(PaError err = Pa_Initialize() != paNoError) {
+        checkErr(err);
+    }
+
+    openAndStartAllStreams(stream, data);
+
     if(MODE) {
-        return defaultMode();
+        defaultMode();
     } else {
-        return experimentalMode();
+        experimentalMode();
     }
 }
