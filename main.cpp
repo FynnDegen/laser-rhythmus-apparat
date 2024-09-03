@@ -18,12 +18,18 @@ struct SineWaveData {
     double frequency;
     double amplitude;
     double phase;
-    double phaseIncrement;
+
+    void increment() {
+        phase += (2.0 * M_PI * frequency) / SAMPLE_RATE;
+        if (phase >= 2.0 * M_PI) {
+            phase -= 2.0 * M_PI;
+        }
+    }
 };
 
 int serial_port;
 
-PaStream *stream[NUM_LASER];
+PaStream *stream;
 SineWaveData data[NUM_LASER];
 
 static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
@@ -31,10 +37,16 @@ static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long
     SineWaveData *data = (SineWaveData*)userData;
     
     for (unsigned long i = 0; i < framesPerBuffer; i++) {
-        *out++ = (float)(data->amplitude * sin(data->phase));
-        data->phase += (2.0 * M_PI * data->frequency) / SAMPLE_RATE;
-        if (data->phase >= 2.0 * M_PI) {
-            data->phase -= 2.0 * M_PI;
+
+        float audioOutput = 0;
+        for(size_t i = 0; i < NUM_LASER; i++) {
+            audioOutput += data[i].amplitude * sin(data[i].phase);
+        }
+        audioOutput /= 3;
+        *out++ = audioOutput;
+
+        for(size_t i = 0; i < NUM_LASER; i++) {
+            data[i].increment();
         }
     }
     return paContinue;
@@ -45,6 +57,7 @@ void checkErr(PaError err) {
     fprintf(stderr, "An error occurred while using the PortAudio stream\n");
     fprintf(stderr, "Error number: %d\n", err);
     fprintf(stderr, "Error message: %s\n", Pa_GetErrorText(err));
+    exit(-1);
 }
 
 void initalizeSineWaveData(SineWaveData data[]) {
@@ -52,29 +65,6 @@ void initalizeSineWaveData(SineWaveData data[]) {
         data[i].frequency = 0.0;
         data[i].amplitude = 0.5;
         data[i].phase = 0.0;
-        data[i].phaseIncrement = (2.0 * M_PI * data[i].frequency) / SAMPLE_RATE;
-    }
-}
-
-void openAndStartAllStreams(PaStream *stream[], SineWaveData data[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        if( PaError err = Pa_OpenDefaultStream(&stream[i], 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data[i]) != paNoError) {
-            checkErr(err);
-        }
-        if(PaError err = Pa_StartStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
-    }
-}
-
-void stopAndCloseAllStreams(PaStream *stream[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        if(PaError err = Pa_StopStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
-        if(PaError err = Pa_CloseStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
     }
 }
 
@@ -131,11 +121,10 @@ void defaultMode() {
         987.767, 783.991, 659.255, 554.365, 440.0
     }; // h2 g2 e2 cis2/des2 a1
 
-    // Read and display data
     char read_buf[256];
-    memset(&read_buf, '\0', sizeof(read_buf));
 
     while(true) {
+        memset(&read_buf, '\0', sizeof(read_buf));
         int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
@@ -156,13 +145,11 @@ void defaultMode() {
                 data[laserIndex].frequency = 0;
             }
         }
-
-        memset(&read_buf, '\0', sizeof(read_buf));
     }
 }
 
 void experimentalMode() {
-    // Read and display data
+
     char read_buf[256];
 
     while(true) {
@@ -192,7 +179,12 @@ void experimentalMode() {
 
 void signalHandler(int signum) {
     close(serial_port);
-    stopAndCloseAllStreams(stream);
+    if(PaError err = Pa_StopStream(stream) != paNoError) {
+        checkErr(err);
+    }
+    if(PaError err = Pa_CloseStream(stream) != paNoError) {
+        checkErr(err);
+    }
     Pa_Terminate();
     std::cout << "\nLRA beendet" << std::endl;
     exit(0);
@@ -212,7 +204,12 @@ int main() {
         checkErr(err);
     }
 
-    openAndStartAllStreams(stream, data);
+    if( PaError err = Pa_OpenDefaultStream(&stream, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data) != paNoError) {
+        checkErr(err);
+    }
+    if(PaError err = Pa_StartStream(stream) != paNoError) {
+        checkErr(err);
+    }
 
     if(MODE) {
         defaultMode();
