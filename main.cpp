@@ -20,6 +20,7 @@ struct SineWaveData {
     double amplitude = 0.0;
     double phase = 0.0;
     bool isPlayed = false;
+    short osc = 0;
 
     void increment() {
         phase += (2.0 * M_PI * frequency) / SAMPLE_RATE;
@@ -34,6 +35,21 @@ int serialPort;
 PaStream *stream;
 SineWaveData data[NUM_LASER];
 
+double oscillator(int oscNum, double phase) {
+    switch(oscNum) {
+        case 0:
+            return sin(phase); // sine wave
+        case 1:
+            return (phase < 0.5) ? 0 : 1; // square wave
+        case 2:
+            return (2/M_PI)*asin(sin(phase));
+        case 3:
+            return 2*((phase/2*M_PI) - floor(0.5 + (phase/2*M_PI)));
+        default:
+            return 0.0;
+    }
+}
+
 static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
     float *out = (float*)outputBuffer;
     SineWaveData *data = (SineWaveData*)userData;
@@ -42,7 +58,7 @@ static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long
 
         float audioOutput = 0;
         for(size_t i = 0; i < NUM_LASER; i++) {
-            audioOutput += data[i].amplitude * sin(data[i].phase);
+            audioOutput += data[i].amplitude * oscillator(data[i].osc, data[i].phase);
         }
         audioOutput /= 3.75;
         *out++ = audioOutput;
