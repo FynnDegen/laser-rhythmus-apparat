@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <signal.h>
+#include <random>
 
 #include <portaudio.h>
 
@@ -15,9 +16,9 @@
 #define NUM_LASER 5
 
 struct SineWaveData {
-    double frequency;
-    double amplitude;
-    double phase;
+    double frequency = 0.0;
+    double amplitude = 0.0;
+    double phase = 0.0;
     bool isPlayed = false;
 
     void increment() {
@@ -28,7 +29,7 @@ struct SineWaveData {
     }
 };
 
-int serial_port;
+int serialPort;
 
 PaStream *stream;
 SineWaveData data[NUM_LASER];
@@ -59,14 +60,6 @@ void checkErr(PaError err) {
     exit(-1);
 }
 
-void initalizeSineWaveData(SineWaveData data[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        data[i].frequency = 0.0;
-        data[i].amplitude = 0.5;
-        data[i].phase = 0.0;
-    }
-}
-
 int openSerialPort(const char* port) {
     int serialPort = open(port, O_RDONLY);
 
@@ -90,7 +83,7 @@ void defaultMode() {
 
     while(true) {
         memset(&read_buf, '\0', sizeof(read_buf));
-        int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
+        int num_bytes = read(serialPort, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
             std::cerr << "Fehler beim Lesen vom Arduino" << std::endl;
@@ -106,7 +99,7 @@ void defaultMode() {
 
             if(laser <= 720 && laser >= 60) {
                 if(data[laserIndex].isPlayed) {
-                    data[laserIndex].amplitude = std::max(0.5, data[laserIndex].amplitude-0.125);
+                    data[laserIndex].amplitude = std::max(0.5+((double)(rand() % 10)) / 100.0, data[laserIndex].amplitude-0.125);
                 } else {
                     data[laserIndex].amplitude = 0.75;
                     data[laserIndex].isPlayed = true;
@@ -125,7 +118,7 @@ void experimentalMode() {
 
     while(true) {
         memset(&read_buf, '\0', sizeof(read_buf));
-        int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
+        int num_bytes = read(serialPort, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
             std::cerr << "Fehler beim Lesen vom Arduino" << std::endl;
@@ -149,14 +142,16 @@ void experimentalMode() {
 }
 
 void signalHandler(int signum) {
-    close(serial_port);
     if(PaError err = Pa_StopStream(stream) != paNoError) {
         checkErr(err);
     }
     if(PaError err = Pa_CloseStream(stream) != paNoError) {
         checkErr(err);
     }
-    Pa_Terminate();
+    if(PaError err = Pa_Terminate() != paNoError) {
+        checkErr(err);
+    }
+    close(serialPort);
     std::cout << "\nLRA beendet" << std::endl;
     exit(0);
 }
@@ -166,11 +161,9 @@ int main() {
     signal(SIGINT, signalHandler);
 
     // Serial port
-    serial_port = openSerialPort("/dev/ttyACM0");
+    serialPort = openSerialPort("/dev/ttyACM0");
 
     //PortAudio
-    initalizeSineWaveData(data);
-
     if(PaError err = Pa_Initialize() != paNoError) {
         checkErr(err);
     }
