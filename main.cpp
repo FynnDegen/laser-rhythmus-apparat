@@ -42,9 +42,9 @@ double oscillator(int oscNum, double phase) {
         case 1:
             return (phase < 0.5) ? 0 : 1; // square wave
         case 2:
-            return (2/M_PI)*asin(sin(phase));
+            return (2/M_PI)*asin(sin(phase)); // triangle wave
         case 3:
-            return 2*((phase/2*M_PI) - floor(0.5 + (phase/2*M_PI)));
+            return (cos(phase/2) < 0.0) ? (2/M_PI)*asin(sin(phase/2)) : (2/M_PI)*asin(cos((phase/2) - M_PI)); // sawtooth wave
         default:
             return 0.0;
     }
