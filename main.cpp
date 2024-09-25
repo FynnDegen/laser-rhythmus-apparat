@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <signal.h>
+#include <random>
 
 #include <portaudio.h>
 
@@ -13,22 +15,56 @@
 #define SAMPLE_RATE 44100
 #define NUM_LASER 5
 
-typedef struct {
-    double frequency;
-    double amplitude;
-    double phase;
-    double phaseIncrement;
-} SineWaveData;
+struct SineWaveData {
+    double frequency = 0.0;
+    double amplitude = 0.0;
+    double phase = 0.0;
+    bool isPlayed = false;
+    short osc = 0;
+
+    void increment() {
+        phase += (2.0 * M_PI * frequency) / SAMPLE_RATE;
+        if (phase >= 2.0 * M_PI) {
+            phase -= 2.0 * M_PI;
+        }
+    }
+};
+
+int serialPort;
+
+PaStream *stream;
+SineWaveData data[NUM_LASER];
+
+double oscillator(int oscNum, double phase) {
+    switch(oscNum) {
+        case 0:
+            return sin(phase); // sine wave
+        case 1:
+            return (phase < 0.5) ? 0 : 1; // square wave
+        case 2:
+            return (2/M_PI)*asin(sin(phase)); // triangle wave
+        case 3:
+            return (cos(phase/2) < 0.0) ? (2/M_PI)*asin(sin(phase/2)) : (2/M_PI)*asin(cos((phase/2) - M_PI)); // sawtooth wave
+        default:
+            return 0.0;
+    }
+}
 
 static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData) {
     float *out = (float*)outputBuffer;
     SineWaveData *data = (SineWaveData*)userData;
     
     for (unsigned long i = 0; i < framesPerBuffer; i++) {
-        *out++ = (float)(data->amplitude * sin(data->phase));
-        data->phase += (2.0 * M_PI * data->frequency) / SAMPLE_RATE;
-        if (data->phase >= 2.0 * M_PI) {
-            data->phase -= 2.0 * M_PI;
+
+        float audioOutput = 0;
+        for(size_t i = 0; i < NUM_LASER; i++) {
+            audioOutput += data[i].amplitude * oscillator(data[i].osc, data[i].phase);
+        }
+        audioOutput /= 3.75;
+        *out++ = audioOutput;
+
+        for(size_t i = 0; i < NUM_LASER; i++) {
+            data[i].increment();
         }
     }
     return paContinue;
@@ -36,113 +72,37 @@ static int paCallback(const void *inputBuffer, void *outputBuffer, unsigned long
 
 void checkErr(PaError err) {
     Pa_Terminate();
-    fprintf(stderr, "An error occurred while using the PortAudio stream\n");
-    fprintf(stderr, "Error number: %d\n", err);
-    fprintf(stderr, "Error message: %s\n", Pa_GetErrorText(err));
+    std::cerr << "Fehler bei der Nutzung von PortAudio: " << Pa_GetErrorText(err) << std::endl;
+    exit(-1);
 }
 
-void initalizeSineWaveData(SineWaveData data[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        data[i].frequency = 0.0;
-        data[i].amplitude = 0.5;
-        data[i].phase = 0.0;
-        data[i].phaseIncrement = (2.0 * M_PI * data[i].frequency) / SAMPLE_RATE;
+int openSerialPort(const char* port) {
+    int serialPort = open(port, O_RDONLY);
+
+    if(serialPort < 0) {
+        std::cerr << "Fehler beim Verbinden zum Arduino" << std::endl;
+        exit(-1);
     }
+
+    return serialPort;
 }
 
-void openAndStartAllStreams(PaStream *stream[], SineWaveData data[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        if( PaError err = Pa_OpenDefaultStream(&stream[i], 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data[i]) != paNoError) {
-            checkErr(err);
-        }
-        if(PaError err = Pa_StartStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
-    }
-}
+void defaultMode() {
 
-void stopAndCloseAllStreams(PaStream *stream[]) {
-    for(int i = 0; i < NUM_LASER; i++) {
-        if(PaError err = Pa_StopStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
-        if(PaError err = Pa_CloseStream(stream[i]) != paNoError) {
-            checkErr(err);
-        }
-    }
-}
+    data[0].frequency = 987.767; // h2
+    data[1].frequency = 783.991; // g2
+    data[2].frequency = 659.255; // e2
+    data[3].frequency = 554.365; // cis2/des2
+    data[4].frequency = 440.0;   // a1
 
-int defaultMode() {
-    // serial port
-    int serial_port = open("/dev/ttyACM0", O_RDONLY);
-
-    //PortAudio
-    PaStream *stream[NUM_LASER];
-    SineWaveData data[NUM_LASER];
-
-    const float notes[5] = {
-        987.767, 783.991, 659.255, 554.365, 440.0
-    };
-
-    initalizeSineWaveData(data);
-
-    if(PaError err = Pa_Initialize() != paNoError) {
-        checkErr(err);
-    }
-
-    openAndStartAllStreams(stream, data);   
-
-    if(serial_port < 0) {
-        std::cerr << "Error opening serial port\n";
-        return -1;
-    }
-
-    // Configure serial port
-    struct termios tty;
-    if(tcgetattr(serial_port, &tty) != 0) {
-        std::cerr << "Error getting termios attributes\n";
-        close(serial_port);
-        return 1;
-    }
-
-    tty.c_cflag &= ~PARENB; // No parity bit
-    tty.c_cflag &= ~CSTOPB; // One stop bit
-    tty.c_cflag &= ~CSIZE;  // Clear size bits
-    tty.c_cflag |= CS8;     // 8 data bits
-    tty.c_cflag &= ~CRTSCTS; // No flow control
-    tty.c_cflag |= CREAD | CLOCAL; // Turn on READ & ignore ctrl lines (CLOCAL = 1)
-
-    tty.c_lflag &= ~ICANON;
-    tty.c_lflag &= ~ECHO; // Disable echo
-    tty.c_lflag &= ~ECHOE; // Disable erasure
-    tty.c_lflag &= ~ECHONL; // Disable new-line echo
-    tty.c_lflag &= ~ISIG; // Disable interpretation of INTR, QUIT and SUSP
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Turn off s/w flow ctrl
-    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL); // Disable any special handling of received bytes
-    tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
-    tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
-
-    tty.c_cc[VTIME] = 1;    // Wait for up to 1s, returning as soon as any data is received
-    tty.c_cc[VMIN] = 0;
-
-    cfsetispeed(&tty, B9600);
-    cfsetospeed(&tty, B9600);
-
-    if(tcsetattr(serial_port, TCSANOW, &tty) != 0) {
-        std::cerr << "Error setting termios attributes\n";
-        close(serial_port);
-        return 1;
-    }
-
-    // Read and display data
     char read_buf[256];
-    memset(&read_buf, '\0', sizeof(read_buf));
 
     while(true) {
-        int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
+        memset(&read_buf, '\0', sizeof(read_buf));
+        int num_bytes = read(serialPort, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
-            std::cerr << "Error reading from serial port\n";
+            std::cerr << "Fehler beim Lesen vom Arduino" << std::endl;
             break;
         }
 
@@ -154,94 +114,30 @@ int defaultMode() {
             std::cout << laserIndex << " " << laser << std::endl;
 
             if(laser <= 720 && laser >= 60) {
-                data[laserIndex].frequency = notes[laserIndex];
+                if(data[laserIndex].isPlayed) {
+                    data[laserIndex].amplitude = std::max(0.5+((double)(rand() % 10)) / 100.0, data[laserIndex].amplitude-0.125);
+                } else {
+                    data[laserIndex].amplitude = 0.75;
+                    data[laserIndex].isPlayed = true;
+                }
             } else if((laser > 720 || laser < 60) && laser != 0) {
-                data[laserIndex].frequency = 0;
+                data[laserIndex].amplitude = std::max(0.0, data[laserIndex].amplitude-0.075);
+                data[laserIndex].isPlayed = false;
             }
         }
-
-        memset(&read_buf, '\0', sizeof(read_buf));
     }
-
-    close(serial_port);
-
-    stopAndCloseAllStreams(stream);
-
-    Pa_Terminate();
 }
 
-int experimentalMode() {
-    // serial port
-    int serial_port = open("/dev/ttyACM0", O_RDONLY);
+void experimentalMode() {
 
-    //PortAudio
-    PaStream *stream[NUM_LASER];
-    SineWaveData data[NUM_LASER];
-
-    // int (*callbacks[2])(const void*, void*, unsigned long, const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void*);
-
-    // callbacks[0] = paCallback0;
-    // callbacks[1] = paCallback1;
-
-    initalizeSineWaveData(data);
-
-    if(PaError err = Pa_Initialize() != paNoError) {
-        checkErr(err);
-    }
-
-    openAndStartAllStreams(stream, data);   
-
-    if(serial_port < 0) {
-        std::cerr << "Error opening serial port\n";
-        return -1;
-    }
-
-    // Configure serial port
-    struct termios tty;
-    if(tcgetattr(serial_port, &tty) != 0) {
-        std::cerr << "Error getting termios attributes\n";
-        close(serial_port);
-        return 1;
-    }
-
-    tty.c_cflag &= ~PARENB; // No parity bit
-    tty.c_cflag &= ~CSTOPB; // One stop bit
-    tty.c_cflag &= ~CSIZE;  // Clear size bits
-    tty.c_cflag |= CS8;     // 8 data bits
-    tty.c_cflag &= ~CRTSCTS; // No flow control
-    tty.c_cflag |= CREAD | CLOCAL; // Turn on READ & ignore ctrl lines (CLOCAL = 1)
-
-    tty.c_lflag &= ~ICANON;
-    tty.c_lflag &= ~ECHO; // Disable echo
-    tty.c_lflag &= ~ECHOE; // Disable erasure
-    tty.c_lflag &= ~ECHONL; // Disable new-line echo
-    tty.c_lflag &= ~ISIG; // Disable interpretation of INTR, QUIT and SUSP
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Turn off s/w flow ctrl
-    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL); // Disable any special handling of received bytes
-    tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
-    tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
-
-    tty.c_cc[VTIME] = 1;    // Wait for up to 1s, returning as soon as any data is received
-    tty.c_cc[VMIN] = 0;
-
-    cfsetispeed(&tty, B9600);
-    cfsetospeed(&tty, B9600);
-
-    if(tcsetattr(serial_port, TCSANOW, &tty) != 0) {
-        std::cerr << "Error setting termios attributes\n";
-        close(serial_port);
-        return 1;
-    }
-
-    // Read and display data
     char read_buf[256];
-    memset(&read_buf, '\0', sizeof(read_buf));
 
     while(true) {
-        int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
+        memset(&read_buf, '\0', sizeof(read_buf));
+        int num_bytes = read(serialPort, &read_buf, sizeof(read_buf));
 
         if(num_bytes < 0) {
-            std::cerr << "Error reading from serial port\n";
+            std::cerr << "Fehler beim Lesen vom Arduino" << std::endl;
             break;
         }
 
@@ -258,22 +154,46 @@ int experimentalMode() {
                 data[laserIndex].frequency = 0;
             }
         }
-
-        memset(&read_buf, '\0', sizeof(read_buf));
     }
-
-    close(serial_port);
-
-    stopAndCloseAllStreams(stream);
-
-    Pa_Terminate();
 }
 
+void signalHandler(int signum) {
+    if(PaError err = Pa_StopStream(stream) != paNoError) {
+        checkErr(err);
+    }
+    if(PaError err = Pa_CloseStream(stream) != paNoError) {
+        checkErr(err);
+    }
+    if(PaError err = Pa_Terminate() != paNoError) {
+        checkErr(err);
+    }
+    close(serialPort);
+    std::cout << "\nLRA beendet" << std::endl;
+    exit(0);
+}
 
 int main() {
+    // Signal handler
+    signal(SIGINT, signalHandler);
+
+    // Serial port
+    serialPort = openSerialPort("/dev/ttyACM0");
+
+    //PortAudio
+    if(PaError err = Pa_Initialize() != paNoError) {
+        checkErr(err);
+    }
+
+    if( PaError err = Pa_OpenDefaultStream(&stream, 0, 1, paFloat32, SAMPLE_RATE, 256, paCallback, &data) != paNoError) {
+        checkErr(err);
+    }
+    if(PaError err = Pa_StartStream(stream) != paNoError) {
+        checkErr(err);
+    }
+
     if(MODE) {
-        return defaultMode();
+        defaultMode();
     } else {
-        return experimentalMode();
+        experimentalMode();
     }
 }
